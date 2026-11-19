@@ -167,7 +167,7 @@ class TestPipelineMock(unittest.TestCase):
         pipe = SpeculativePipeline(asr, llm, personalization=pers,
                                    config=PipelineConfig(measure_baseline=False, trigger_ratio=0.9))
         self.assertIn("用户画像", pipe.system)
-        self.assertEqual(pipe.hotwords, ["小智", "豆包"])
+        self.assertEqual(pipe.hotwords, ["小语", "豆包"])
         res = pipe.run_utterance(self._audio(2.0), final_text="你好啊今天天气怎么样")
         self.assertIsNotNone(res)
 
