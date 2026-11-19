@@ -163,7 +163,7 @@ class TestPipelineMock(unittest.TestCase):
     def test_personalization_persona_changes_system(self):
         asr = MockASR(["你好啊", "你好啊今天天气"])
         llm = MockLLM(spec_text="晴。", final_text="晴。")
-        pers = StaticPersonalization(hotwords=["小智", "豆包"], persona_card="用户偏好简短回答")
+        pers = StaticPersonalization(hotwords=["小语", "豆包"], persona_card="用户偏好简短回答")
         pipe = SpeculativePipeline(asr, llm, personalization=pers,
                                    config=PipelineConfig(measure_baseline=False, trigger_ratio=0.9))
         self.assertIn("用户画像", pipe.system)
