@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asr-spec-live"
+version = "0.1.0"
+description = "Streaming ASR + speculative LLM pre-generation: start generating the answer before the user finishes speaking."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "JadeL-Kemo" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "onnxruntime>=1.16",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+full = ["torch>=2.2", "torchaudio>=2.2"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+asr-spec-demo = "asr_spec.demo:main"
+asr-spec-web = "asr_spec.webdemo:main"
+
+[tool.setuptools]
+packages = ["asr_spec"]
+
+[tool.setuptools.package-data]
+asr_spec = ["web/*.html"]

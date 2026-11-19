@@ -1,0 +1,27 @@
+# models & weights (download with scripts/download_models.py)
+models/
+*.gguf
+*.onnx
+*.safetensors
+*.bin
+
+# runtime output
+runs/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# os / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# local config
+config.local.json

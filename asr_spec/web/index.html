@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>asr-spec-live · 实时投机演示</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #121a2e; --panel2: #18213a; --line: #263252;
+    --text: #e6ecff; --muted: #8b9ac2; --accent: #5b9cff; --accent2: #7cf5c8;
+    --ok: #34d399; --warn: #fbbf24; --bad: #fb7185; --spec: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 700px at 15% -10%, #17264a 0%, var(--bg) 55%);
+         color: var(--text); font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  header { padding: 18px 26px 10px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .5px; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .status { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .pill { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+          font-size: 12.5px; color: var(--muted); }
+  .pill.on { color: var(--ok); border-color: #1f5b46; background: #0d2a22; }
+  .pill.run { color: var(--accent2); border-color: #1d5a52; background: #0c2b2a; }
+  .pill.err { color: var(--bad); border-color: #5c2230; background: #2a0d14; }
+  main { padding: 0 26px 40px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted);
+             letter-spacing: .8px; text-transform: uppercase; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label.f { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  select, input[type=number], input[type=text] { background: var(--panel2); color: var(--text);
+        border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 13px; }
+  button { background: linear-gradient(180deg, #2a6df0, #1d4fd0); color: #fff; border: 0; border-radius: 9px;
+           padding: 8px 16px; font-size: 13.5px; cursor: pointer; font-weight: 600; }
+  button.ghost { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2);
+          color: var(--muted); font-size: 12px; cursor: pointer; user-select: none; }
+  .chip.sel { border-color: var(--accent); color: var(--accent2); background: #10233f; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .metric { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .metric .l { color: var(--muted); font-size: 11.5px; letter-spacing: .3px; }
+  .metric .v { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .metric .v small { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .live { display: grid; gap: 10px; }
+  .phase { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.listening { background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  .dot.speculating { background: var(--spec); box-shadow: 0 0 12px var(--spec); }
+  .dot.gated, .dot.turn_done { background: var(--warn); }
+  .dot.finished { background: var(--ok); }
+  .dot.error { background: var(--bad); }
+  .partial { font-size: 25px; line-height: 1.5; min-height: 42px; letter-spacing: .5px; color: #f2f6ff; }
+  .partial .cursor { display: inline-block; width: 9px; height: 24px; background: var(--accent2);
+                     vertical-align: -3px; animation: blink 1s steps(2) infinite; margin-left: 2px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .rowline { display: grid; grid-template-columns: 92px 1fr; gap: 10px; padding: 7px 0; border-top: 1px dashed var(--line); }
+  .rowline .k { color: var(--muted); font-size: 12px; padding-top: 2px; }
+  .rowline .v { font-size: 14px; }
+  .specbox { background: #1b1430; border: 1px solid #372a5e; border-radius: 10px; padding: 10px 12px; }
+  .specbox .tag { color: var(--spec); font-size: 11.5px; letter-spacing: .6px; }
+  .specbox .ans { font-size: 15.5px; margin-top: 3px; white-space: pre-wrap; }
+  .turns { display: grid; gap: 10px; }
+  .turn { background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--muted);
+          border-radius: 12px; padding: 12px 14px; }
+  .turn.accept { border-left-color: var(--ok); }
+  .turn.reject { border-left-color: var(--warn); }
+  .turn .hd { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .badge { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; font-weight: 600; }
+  .badge.accept { background: #0e2f26; color: var(--ok); border: 1px solid #1f5b46; }
+  .badge.reject { background: #2c2410; color: var(--warn); border: 1px solid #5c4a1a; }
+  .badge.dim { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .turn .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 9px; }
+  .turn .cell .k { color: var(--muted); font-size: 11.5px; margin-bottom: 3px; }
+  .turn .cell .v { font-size: 13.5px; white-space: pre-wrap; }
+  .turn .cell .v.dim { color: var(--muted); }
+  .diff { margin-top: 9px; font-size: 12.5px; color: var(--muted); }
+  .diff .del { color: var(--bad); text-decoration: line-through; }
+  .diff .add { color: var(--ok); font-weight: 600; }
+  .metachips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+  .mchip { font-size: 11.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+           padding: 2px 9px; background: var(--panel); }
+  .mchip b { color: var(--text); font-weight: 600; }
+  .mchip.save b { color: var(--ok); }
+  audio { width: 100%; margin-top: 8px; }
+  .foot { color: var(--muted); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+  @media (max-width: 900px) { .turn .grid3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>asr-spec-live · 实时投机演示</h1>
+  <span class="sub">ASR 流式 partial → 停顿触发投机 → 门控接受/回滚 → LLM 首句</span>
+  <div class="status">
+    <span class="pill" id="phasePill">空闲</span>
+    <span class="pill" id="statusPill">idle</span>
+  </div>
+</header>
+
+<main>
+  <!-- 控制台 -->
+  <section class="card">
+    <h2>控制台</h2>
+    <div class="controls">
+      <label class="f">模式
+        <select id="mode">
+          <option value="replay">回放（语料 1:1 播放）</option>
+          <option value="mic">麦克风（浏览器采集）</option>
+        </select>
+      </label>
+      <label class="f">端点静音
+        <select id="endpoint">
+          <option value="1.0">1.0 s</option>
+          <option value="1.6" selected>1.6 s</option>
+          <option value="2.0">2.0 s</option>
+        </select>
+      </label>
+      <label class="f">partial 间隔
+        <select id="partial">
+          <option value="0.5" selected>0.5 s</option>
+          <option value="1.0">1.0 s</option>
+        </select>
+      </label>
+      <label class="f"><input type="checkbox" id="baseline" checked /> 同时测冷基线</label>
+      <button id="startBtn">开始</button>
+      <button id="stopBtn" class="ghost" disabled>停止</button>
+      <button id="resetBtn" class="ghost">清空</button>
+    </div>
+    <div class="controls" style="margin-top:12px">
+      <span class="f">回放片段（可多选，按顺序播放）</span>
+      <div class="chips" id="ids"></div>
+    </div>
+    <div id="audioWrap" style="display:none">
+      <audio id="audio" controls></audio>
+    </div>
+    <div id="msg" class="foot" style="margin-top:10px"></div>
+  </section>
+
+  <!-- 指标 -->
+  <section class="card">
+    <h2>会话指标</h2>
+    <div class="metrics">
+      <div class="metric"><div class="l">命中率（门控接受）</div><div class="v" id="mHit">—</div></div>
+      <div class="metric"><div class="l">轮次 / 接受</div><div class="v" id="mTurns">— <small></small></div></div>
+      <div class="metric"><div class="l">首句平均节省</div><div class="v" id="mSaved">— <small>ms</small></div></div>
+      <div class="metric"><div class="l">投机生成平均</div><div class="v" id="mSpec">— <small>ms</small></div></div>
+      <div class="metric"><div class="l">前缀缓存命中</div><div class="v" id="mCache">— <small>tok</small></div></div>
+      <div class="metric"><div class="l">首句就绪（停说后）</div><div class="v" id="mFs">— <small>ms</small></div></div>
+    </div>
+  </section>
+
+  <!-- 实时 -->
+  <section class="card">
+    <h2>实时</h2>
+    <div class="live">
+      <div class="phase"><span class="dot" id="phaseDot"></span><span id="phaseText">等待开始</span>
+        <span class="pill" id="livet" style="margin-left:auto"></span></div>
+      <div class="partial" id="partial"><span class="empty">（尚未开始）</span></div>
+      <div class="rowline"><div class="k">触发文本</div><div class="v" id="trigText">—</div></div>
+      <div class="rowline"><div class="k">投机答案</div><div class="v" id="specText">
+        <div class="specbox"><div class="tag">speculative · 等待触发</div><div class="ans">—</div></div></div></div>
+    </div>
+  </section>
+
+  <!-- 轮次 -->
+  <section class="card">
+    <h2>轮次时间线</h2>
+    <div class="turns" id="turns"><div class="empty">还没有轮次。点击“开始”后，这里会实时出现每一轮：触发文本 → 投机答案 → 最终 ASR → 命中/回滚 → 修正 diff → 首句延迟。</div></div>
+  </section>
+
+  <section class="card">
+    <h2>说明</h2>
+    <div class="foot">
+      <span>触发策略：用户停顿（近 0.6s 静音 + partial 稳定）；门控：最终文本与触发文本严格一致（容差 ≤2 字，且不含数量词变化）。</span>
+      <span>回放模式下音频在浏览器播放，后端同时按真实时钟喂 VAD/ASR，所以“听到的”和“看到的”基本同步（起播有 <0.5s 偏差）。</span>
+      <span>麦克风模式需要浏览器授权；安静环境建议端点 1.0s。</span>
+    </div>
+  </section>
+</main>
+
+<script>
+const ALL_IDS = ["u01","u06","u11","u16","u26","u29","u31","u34"];
+const SEL = new Set(["u01","u06"]);
+let audioStarted = false, micCtx = null, micProc = null, micStream = null, lastStatus = null;
+
+function el(id){ return document.getElementById(id); }
+function fmt(v, unit){ return v === null || v === undefined ? "—" : (Math.round(v*10)/10 + (unit ? " <small>"+unit+"</small>" : "")); }
+
+function renderIds(){
+  const box = el("ids"); box.innerHTML = "";
+  ALL_IDS.forEach(id => {
+    const c = document.createElement("span");
+    c.className = "chip" + (SEL.has(id) ? " sel" : "");
+    c.textContent = id;
+    c.onclick = () => { SEL.has(id) ? SEL.delete(id) : SEL.add(id); renderIds(); };
+    box.appendChild(c);
+  });
+}
+renderIds();
+
+function phaseLabel(p){
+  return {idle:"空闲", listening:"正在听…", speculating:"投机生成中…", gated:"门控中…",
+          turn_done:"本轮结束", finished:"会话结束", error:"错误"}[p] || p;
+}
+
+function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function renderTurn(t){
+  const acc = t.accepted;
+  const corr = t.correction;
+  let diff = "";
+  if (corr && (corr.removed || corr.added)) {
+    diff = `<div class="diff">修正：<span class="del">${escapeHtml(corr.removed) || "∅"}</span> → <span class="add">${escapeHtml(corr.added) || "∅"}</span>`
+         + `<span class="mchip" style="margin-left:8px">公共前缀 ${escapeHtml(corr.prefix).length} 字</span></div>`;
+  } else if (corr) {
+    diff = `<div class="diff">触发文本与最终识别一致，无修正</div>`;
+  }
+  const m = t.metrics || {};
+  const chips = [];
+  if (t.spec) chips.push(`<span class="mchip">spec <b>${fmt(t.spec.total_ms)} ms</b></span>`);
+  if (t.spec && t.spec.cache_n != null) chips.push(`<span class="mchip">cache <b>${t.spec.cache_n}</b> tok</span>`);
+  if (t.fs_after_stop_ms != null) chips.push(`<span class="mchip">首句就绪 <b>${fmt(t.fs_after_stop_ms)}</b> ms</span>`);
+  if (t.baseline_fs_after_stop_ms != null) chips.push(`<span class="mchip">标准路径首句 <b>${fmt(t.baseline_fs_after_stop_ms)}</b> ms</span>`);
+  if (t.saved_ms != null) chips.push(`<span class="mchip save">首句节省 <b>${fmt(t.saved_ms)}</b> ms</span>`);
+  if (m.trigger_wall_s != null) chips.push(`<span class="mchip">触发 @ ${fmt(m.trigger_wall_s)} s</span>`);
+  return `<div class="turn ${acc ? "accept" : "reject"}">
+    <div class="hd">
+      <span class="badge ${acc ? "accept" : "reject"}">${acc ? "✅ 命中（直接用投机答案）" : "🔄 回滚（用最终文本重生成）"}</span>
+      <span class="badge dim">#${t.idx}</span>
+      <span class="badge dim">音频 ${t.audio_sec}s</span>
+      ${t.trigger ? `<span class="badge dim">触发 @ ${t.trigger.t_s}s</span>` : ""}
+    </div>
+    <div class="grid3">
+      <div class="cell"><div class="k">触发时的流式文本（ASR partial）</div><div class="v">${escapeHtml(t.trigger ? t.trigger.text : "—")}</div></div>
+      <div class="cell"><div class="k">投机答案（9B，基于触发文本）</div><div class="v dim">${escapeHtml(t.spec ? t.spec.answer : "—")}</div></div>
+      <div class="cell"><div class="k">最终 ASR 文本（端点后）</div><div class="v">${escapeHtml(t.final_text)}</div></div>
+    </div>
+    ${diff}
+    <div class="metachips">${chips.join("")}</div>
+    <div class="metachips"><span class="mchip">交付答案：<b>${escapeHtml(t.answer)}</b></span></div>
+  </div>`;
+}
+
+function renderLive(st){
+  const p = st.live || {};
+  el("phaseDot").className = "dot " + (p.phase || "idle");
+  el("phaseText").textContent = phaseLabel(p.phase || "idle");
+  el("phasePill").textContent = phaseLabel(p.phase || "idle");
+  el("phasePill").className = "pill " + (st.status === "running" ? "run" : st.status === "error" ? "err" : st.status === "finished" ? "on" : "");
+  el("statusPill").textContent = st.status;
+  el("livet").textContent = p.partial_t != null ? `音频 ${p.partial_t}s · ASR ${p.partial_latency || "?"}ms` : "";
+
+  const partial = p.partial && p.partial.trim() ? p.partial : "";
+  el("partial").innerHTML = partial
+    ? escapeHtml(partial) + (p.phase === "listening" ? '<span class="cursor"></span>' : "")
+    : '<span class="empty">（等待语音…）</span>';
+
+  el("trigText").innerHTML = p.trigger ? escapeHtml(p.trigger.text) + (p.trigger.retrigger ? ' <span class="mchip">重触发</span>' : "") : "—";
+  if (p.spec) {
+    el("specText").innerHTML = `<div class="specbox"><div class="tag">speculative · ${fmt(p.spec.total_ms)} ms · cache ${p.spec.cache_n == null ? "?" : p.spec.cache_n} tok</div><div class="ans">${escapeHtml(p.spec.answer)}</div></div>`;
+  } else {
+    el("specText").innerHTML = '<div class="specbox"><div class="tag">speculative</div><div class="ans" style="color:var(--muted)">等待触发…</div></div>';
+  }
+
+  const s = st.stats || {};
+  el("mHit").textContent = s.hit_rate == null ? "—" : Math.round(s.hit_rate * 100) + "%";
+  el("mTurns").innerHTML = s.turns == null ? "—" : `${s.turns} <small>/ ${s.accepted} 接受</small>`;
+  el("mSaved").innerHTML = fmt(s.avg_saved_ms, "ms");
+  el("mSpec").innerHTML = fmt(s.avg_spec_ms, "ms");
+  el("mCache").innerHTML = fmt(s.avg_cache_n, "tok");
+  el("mFs").innerHTML = fmt(s.avg_fs_after_stop_ms, "ms");
+
+  el("msg").textContent = st.message || "";
+
+  const turnsBox = el("turns");
+  if (st.turns && st.turns.length) {
+    turnsBox.innerHTML = st.turns.map(renderTurn).join("");
+  }
+}
+
+async function poll(){
+  try {
+    const r = await fetch("/api/state", {cache:"no-store"});
+    const st = await r.json();
+    renderLive(st);
+    const running = st.status === "running";
+    if (running && st.mode === "replay" && st.audio_url && !audioStarted) {
+      audioStarted = true;
+      el("audioWrap").style.display = "block";
+      const a = el("audio");
+      a.src = st.audio_url;
+      a.play().catch(()=>{});
+    }
+    if (!running) { audioStarted = false; }
+    el("startBtn").disabled = running || st.status === "preparing";
+    el("stopBtn").disabled = !(running || st.status === "preparing");
+  } catch (e) {
+    el("statusPill").textContent = "disconnected";
+  }
+}
+
+async function start(){
+  const mode = el("mode").value;
+  const cfg = {
+    mode,
+    ids: [...SEL],
+    endpoint: parseFloat(el("endpoint").value),
+    partial: parseFloat(el("partial").value),
+    baseline: el("baseline").checked,
+    gap: 2.4,
+    speed: 1.0,
+  };
+  if (!cfg.ids.length) { alert("至少选一个回放片段"); return; }
+  await fetch("/api/reset", {method:"POST"});
+  el("turns").innerHTML = '<div class="empty">会话已开始，等待语音…</div>';
+  await fetch("/api/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg)});
+  if (mode === "mic") await startMic();
+}
+
+async function stop(){
+  stopMic();
+  await fetch("/api/stop", {method:"POST"});
+}
+
+async function reset(){
+  stopMic();
+  await fetch("/api/reset", {method:"POST"});
+  el("turns").innerHTML = '<div class="empty">已清空。</div>';
+  audioStarted = false;
+}
+
+/* ---------- 浏览器麦克风 → 16k PCM ---------- */
+async function startMic(){
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1, echoCancellation:true, noiseSuppression:true}});
+    micCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = micCtx.createMediaStreamSource(micStream);
+    micProc = micCtx.createScriptProcessor(4096, 1, 1);
+    const ratio = micCtx.sampleRate / 16000;
+    let pending = [];
+    micProc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      const n = Math.floor(d.length / ratio);
+      const out = new Int16Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = i * ratio, i0 = Math.floor(x), f = x - i0;
+        const v = (d[i0] || 0) * (1 - f) + (d[i0 + 1] || 0) * f;
+        out[i] = Math.max(-1, Math.min(1, v)) * 32767;
+      }
+      pending.push(out);
+      const total = pending.reduce((a, b) => a + b.length, 0);
+      if (total >= 6400) {  // 0.4s
+        const merged = new Int16Array(total);
+        let off = 0;
+        for (const p of pending) { merged.set(p, off); off += p.length; }
+        pending = [];
+        fetch("/api/mic", {method:"POST", headers:{"Content-Type":"application/octet-stream"}, body: merged.buffer});
+      }
+    };
+    src.connect(micProc);
+    micProc.connect(micCtx.destination);
+    el("msg").textContent = "麦克风已开启（若浏览器无声音输出也无妨）";
+  } catch (e) {
+    alert("麦克风不可用：" + e.message);
+  }
+}
+function stopMic(){
+  try { if (micProc) { micProc.disconnect(); micProc.onaudioprocess = null; } } catch(e){}
+  try { if (micCtx) micCtx.close(); } catch(e){}
+  try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch(e){}
+  micProc = micCtx = micStream = null;
+}
+
+el("startBtn").onclick = start;
+el("stopBtn").onclick = stop;
+el("resetBtn").onclick = reset;
+el("mode").onchange = () => { el("audioWrap").style.display = "none"; };
+poll();
+setInterval(poll, 250);
+</script>
+</body>
+</html>
