@@ -118,7 +118,7 @@
         </select>
       </label>
       <label class="f">partial 间隔
-        <select id="partial">
+        <select id="pinterval">
           <option value="0.5" selected>0.5 s</option>
           <option value="1.0">1.0 s</option>
         </select>
@@ -303,20 +303,33 @@ async function poll(){
 
 async function start(){
   const mode = el("mode").value;
+  const num = (id, dflt) => {
+    const v = parseFloat(el(id) && el(id).value);
+    return Number.isFinite(v) ? v : dflt;
+  };
   const cfg = {
     mode,
     ids: [...SEL],
-    endpoint: parseFloat(el("endpoint").value),
-    partial: parseFloat(el("partial").value),
+    endpoint: num("endpoint", 1.6),
+    partial: num("pinterval", 0.5),
     baseline: el("baseline").checked,
     gap: 2.4,
     speed: 1.0,
   };
   if (!cfg.ids.length) { alert("至少选一个回放片段"); return; }
-  await fetch("/api/reset", {method:"POST"});
-  el("turns").innerHTML = '<div class="empty">会话已开始，等待语音…</div>';
-  await fetch("/api/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg)});
-  if (mode === "mic") await startMic();
+  try {
+    await fetch("/api/reset", {method:"POST"});
+    el("turns").innerHTML = '<div class="empty">会话已开始，等待语音…</div>';
+    const r = await fetch("/api/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg)});
+    if (!r.ok) {
+      const j = await r.json().catch(()=>({}));
+      el("msg").textContent = "启动失败：" + (j.error || r.status);
+      return;
+    }
+    if (mode === "mic") await startMic();
+  } catch (e) {
+    el("msg").textContent = "启动失败：" + e.message;
+  }
 }
 
 async function stop(){

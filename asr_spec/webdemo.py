@@ -32,6 +32,26 @@ RUNS_WEB = PROJECT_DIR / "runs" / "web"
 DEFAULT_IDS = ["u01", "u06", "u11", "u16", "u26", "u29", "u31", "u34"]
 
 
+def _num(cfg: dict, key: str, default: float) -> float:
+    """容忍 None / 空串 / NaN / 非数字，统一回退到默认值（前端可能传 null）。"""
+    v = cfg.get(key, default)
+    if isinstance(v, bool):
+        return default
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return default if f != f else f
+
+
+def _int(cfg: dict, key: str, default: int) -> int:
+    return int(_num(cfg, key, float(default)))
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
 # ---------------------------------------------------------------------------
 # 音频源：麦克风队列
 # ---------------------------------------------------------------------------
@@ -186,6 +206,12 @@ class Session:
 
     def reset(self):
         with self.lock:
+            if getattr(self, "_mic", None) is not None:
+                try:
+                    self._mic.close()
+                except Exception:
+                    pass
+            self._gen = getattr(self, "_gen", 0) + 1
             self.status = "idle"
             self.mode = "replay"
             self.message = ""
@@ -245,11 +271,11 @@ class Session:
             elif ev["type"] in ("partial_error", "spec_error"):
                 self.live["phase"] = "error"
 
-    def consume(self, gen) -> None:
+    def consume(self, items, gen: int) -> None:
         idx = 0
         try:
-            for item in gen:
-                if self.status == "stopped":
+            for item in items:
+                if gen != self._gen or self.status == "stopped":
                     break
                 if isinstance(item, dict):
                     self.add_event(item)
@@ -257,11 +283,13 @@ class Session:
                     idx += 1
                     payload = turn_payload(idx, item)
                     with self.lock:
+                        if gen != self._gen or self.status == "stopped":
+                            break
                         self.turns.append(payload)
                         self.stats = stats_payload(self.turns)
                         self.live["phase"] = "turn_done"
             with self.lock:
-                if self.status != "stopped":
+                if gen == self._gen and self.status != "stopped":
                     self.status = "finished"
                     self.live["phase"] = "finished"
         except Exception as e:  # pragma: no cover
@@ -273,24 +301,25 @@ class Session:
     # -- replay --------------------------------------------------------
     def start_replay(self, cfg: dict) -> None:
         self.reset()
+        gen = self._gen
         with self.lock:
             self.status = "preparing"
             self.mode = "replay"
             self.config = cfg
             self.message = "构建回放音频…"
-        t = threading.Thread(target=self._run_replay, args=(cfg,), daemon=True)
+        t = threading.Thread(target=self._run_replay, args=(cfg, gen), daemon=True)
         self._thread = t
         t.start()
 
-    def _run_replay(self, cfg: dict) -> None:
+    def _run_replay(self, cfg: dict, gen: int) -> None:
         try:
             from .demo import concat_ids
 
-            ids = cfg.get("ids") or DEFAULT_IDS[:2]
+            ids = [str(x) for x in (cfg.get("ids") or DEFAULT_IDS[:2]) if str(x).strip()]
             RUNS_WEB.mkdir(parents=True, exist_ok=True)
             name = f"web_{int(time.time())}.wav"
             wav_path = str(RUNS_WEB / name)
-            gap = float(cfg.get("gap", 2.4))
+            gap = _clamp(_num(cfg, "gap", 2.4), 0.2, 10.0)
             concat_ids(ids, gap, wav_path, head_sec=0.5, tail_sec=2.5)
 
             asr = self.rt.asr()
@@ -299,12 +328,13 @@ class Session:
                 asr, llm, config=PipelineConfig(
                     trigger_ratio=None,
                     measure_baseline=bool(cfg.get("baseline", True)),
-                    n_predict=int(cfg.get("n_predict", 48)),
+                    n_predict=_int(cfg, "n_predict", 48),
                 ),
             )
-            src = FileAudioSource(wav_path, realtime=True, speed=float(cfg.get("speed", 1.0)))
-            endpoint = float(cfg.get("endpoint", 1.6))
-            partial = float(cfg.get("partial", 0.5))
+            src = FileAudioSource(wav_path, realtime=True,
+                                  speed=_clamp(_num(cfg, "speed", 1.0), 0.25, 4.0))
+            endpoint = _clamp(_num(cfg, "endpoint", 1.6), 0.2, 5.0)
+            partial = _clamp(_num(cfg, "partial", 0.5), 0.2, 3.0)
             with self.lock:
                 self.status = "running"
                 self.audio_url = f"/audio/{name}"
@@ -312,7 +342,7 @@ class Session:
             time.sleep(0.8)  # 给浏览器 audio 元素留出起播时间
             self.consume(pipe.run_live(
                 src, end_silence_chunks=max(1, int(round(endpoint / 0.2))),
-                partial_interval=partial))
+                partial_interval=partial), gen)
         except Exception as e:  # pragma: no cover
             with self.lock:
                 self.status = "error"
@@ -321,17 +351,18 @@ class Session:
     # -- mic -----------------------------------------------------------
     def start_mic(self, cfg: dict) -> None:
         self.reset()
+        gen = self._gen
         self._mic = QueueAudioSource()
         with self.lock:
             self.status = "running"
             self.mode = "mic"
             self.config = cfg
             self.message = "等待浏览器麦克风数据…"
-        t = threading.Thread(target=self._run_mic, args=(cfg,), daemon=True)
+        t = threading.Thread(target=self._run_mic, args=(cfg, gen), daemon=True)
         self._thread = t
         t.start()
 
-    def _run_mic(self, cfg: dict) -> None:
+    def _run_mic(self, cfg: dict, gen: int) -> None:
         try:
             asr = self.rt.asr()
             llm = self.rt.llm()
@@ -339,15 +370,15 @@ class Session:
                 asr, llm, config=PipelineConfig(
                     trigger_ratio=None,
                     measure_baseline=bool(cfg.get("baseline", False)),
-                    n_predict=int(cfg.get("n_predict", 48)),
+                    n_predict=_int(cfg, "n_predict", 48),
                 ),
             )
-            endpoint = float(cfg.get("endpoint", 1.0))
-            partial = float(cfg.get("partial", 0.5))
+            endpoint = _clamp(_num(cfg, "endpoint", 1.0), 0.2, 5.0)
+            partial = _clamp(_num(cfg, "partial", 0.5), 0.2, 3.0)
             self.consume(pipe.run_live(
                 self._mic, end_silence_chunks=max(1, int(round(endpoint / 0.2))),
                 partial_interval=partial,
-                energy_threshold=float(cfg.get("energy", 0.010))))
+                energy_threshold=_clamp(_num(cfg, "energy", 0.010), 1e-5, 0.5)), gen)
         except Exception as e:  # pragma: no cover
             with self.lock:
                 self.status = "error"
@@ -357,6 +388,7 @@ class Session:
         with self.lock:
             if self.status in ("running", "preparing"):
                 self.status = "stopped"
+                self._gen += 1
                 self.message = "已停止"
         if self._mic is not None:
             self._mic.close()
@@ -418,7 +450,14 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b""
         try:
             if self.path == "/api/start":
-                cfg = json.loads(raw or b"{}")
+                try:
+                    cfg = json.loads(raw or b"{}")
+                except (ValueError, UnicodeDecodeError) as e:
+                    self._json({"error": f"bad json: {e}"}, 400)
+                    return
+                if not isinstance(cfg, dict):
+                    self._json({"error": "config must be a JSON object"}, 400)
+                    return
                 if self.session.status in ("running", "preparing"):
                     self._json({"error": "已有会话在运行"}, 409)
                     return
@@ -439,7 +478,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "bytes": len(raw)})
             else:
                 self._json({"error": "not found"}, 404)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
+            import traceback
+
+            traceback.print_exc()
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
 

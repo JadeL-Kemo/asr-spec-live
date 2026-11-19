@@ -163,11 +163,11 @@ class TestPipelineMock(unittest.TestCase):
     def test_personalization_persona_changes_system(self):
         asr = MockASR(["你好啊", "你好啊今天天气"])
         llm = MockLLM(spec_text="晴。", final_text="晴。")
-        pers = StaticPersonalization(hotwords=["小语", "豆包"], persona_card="用户偏好简短回答")
+        pers = StaticPersonalization(hotwords=["小智", "豆包"], persona_card="用户偏好简短回答")
         pipe = SpeculativePipeline(asr, llm, personalization=pers,
                                    config=PipelineConfig(measure_baseline=False, trigger_ratio=0.9))
         self.assertIn("用户画像", pipe.system)
-        self.assertEqual(pipe.hotwords, ["小语", "豆包"])
+        self.assertEqual(pipe.hotwords, ["小智", "豆包"])
         res = pipe.run_utterance(self._audio(2.0), final_text="你好啊今天天气怎么样")
         self.assertIsNotNone(res)
 
@@ -226,6 +226,35 @@ class WebDemoTest(unittest.TestCase):
         self.assertEqual(s["avg_spec_ms"], 510.0)
         self.assertEqual(s["avg_cache_n"], 238)
         self.assertEqual(s["avg_fs_after_stop_ms"], 1350.0)
+
+    def test_consume_drops_stale_generation(self):
+        """旧会话线程的 TurnResult 不得混入新会话（重复 id=partial 报错的连带修复）。"""
+        import asr_spec.webdemo as wd
+        old_payload = wd.turn_payload
+        old_stats = wd.stats_payload
+        wd.turn_payload = lambda idx, res: {"idx": idx, "accepted": True, "spec": None,
+                                            "saved_ms": None, "fs_after_stop_ms": None,
+                                            "baseline_fs_after_stop_ms": None}
+        wd.stats_payload = lambda turns: {"turns": len(turns)}
+        try:
+            s = wd.Session(None)
+            gen_old = s._gen
+            s.reset()  # 模拟用户重新开始：旧线程的 gen 失效
+            s.status = "running"
+            s.consume([object()], gen_old)
+            self.assertEqual(len(s.turns), 0)
+            s.consume([object(), object()], s._gen)
+            self.assertEqual([t["idx"] for t in s.turns], [1, 2])
+            s2 = wd.Session(None)
+            s2.status = "running"
+            gen = s2._gen
+            s2.stop()  # stop 使 gen 失效
+            s2.status = "running"  # 即便状态被改写，也不得追加
+            s2.consume([object()], gen)
+            self.assertEqual(len(s2.turns), 0)
+        finally:
+            wd.turn_payload = old_payload
+            wd.stats_payload = old_stats
 
 
 if __name__ == "__main__":
